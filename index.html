@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!-- Private internal tool: keep it out of search engines and link previews. -->
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+<meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+<meta name="referrer" content="no-referrer">
+<title>Marketing Planner</title>
+<link rel="icon" type="image/svg+xml" href="assets/lemonly-logo.svg">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="apple-touch-icon" href="assets/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="login-screen" id="loginScreen" hidden>
+  <div class="login-card">
+    <div class="brand"><img class="brand-logo" src="assets/lemonly-logo.svg" alt=""><span class="brand-mark">Lemonly</span><span class="brand-sub">Planner</span></div>
+    <button class="btn btn-primary" id="signInBtn" type="button">Sign in with Google</button>
+    <p class="login-error" id="loginError" hidden></p>
+  </div>
+</div>
+
+<div class="app" id="app" hidden>
+  <header class="topbar">
+    <div class="topbar-row topbar-row-main">
+      <div class="brand"><img class="brand-logo" src="assets/lemonly-logo.svg" alt=""><span class="brand-mark">Lemonly</span><span class="brand-sub">Planner</span></div>
+      <nav class="view-tabs">
+        <button class="tab-btn" data-view="month" type="button">Monthly Calendar</button>
+        <button class="tab-btn" data-view="timeline" type="button">Timeline</button>
+      </nav>
+      <div class="topbar-actions">
+        <span class="user-badge" id="userBadge"></span>
+        <button class="btn btn-ghost" id="signOutBtn" type="button">Sign out</button>
+        <button class="btn btn-ghost" id="sidebarToggleBtn" type="button">Panel</button>
+        <button class="btn btn-primary" id="newItemBtn" type="button" data-edit-only>+ New Item</button>
+      </div>
+    </div>
+    <div class="topbar-row topbar-row-nav">
+      <div class="period-nav">
+        <button class="btn btn-icon btn-ghost" id="prevBtn" type="button" aria-label="Previous">‹</button>
+        <button class="btn btn-ghost period-label" id="periodLabel" type="button"></button>
+        <button class="btn btn-icon btn-ghost" id="nextBtn" type="button" aria-label="Next">›</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="body">
+    <aside class="sidebar" id="sidebar">
+      <section class="panel">
+        <h2 class="panel-title">Search</h2>
+        <input type="search" id="searchInput" class="input" placeholder="Filter by title…" style="margin-top:8px;">
+      </section>
+      <section class="panel">
+        <div class="panel-title-row">
+          <h2 class="panel-title">Categories</h2>
+          <button class="btn btn-sm btn-ghost" id="addCategoryBtn" type="button" data-edit-only style="background:var(--surface-alt); color:var(--ink);">+ Add</button>
+        </div>
+        <div id="categoryList" class="category-list"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-title-row">
+          <h2 class="panel-title">Unscheduled</h2>
+          <button class="btn btn-sm btn-ghost" id="addUnscheduledBtn" type="button" data-edit-only style="background:var(--surface-alt); color:var(--ink);">+ Add</button>
+        </div>
+        <p class="panel-hint" data-edit-only>Drag a chip onto a view to schedule it.</p>
+        <div id="unscheduledList" class="unscheduled-list"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-title-row">
+          <h2 class="panel-title">Blackout Dates</h2>
+        </div>
+        <p class="panel-hint">Gray out holidays or other blocked-off days on the Monthly Calendar.</p>
+        <div style="display:flex; gap:6px; margin-bottom:8px;" data-edit-only>
+          <input type="date" id="blackoutDateInput" class="input" style="flex:1; min-width:0;">
+          <button class="btn btn-sm btn-ghost" id="addBlackoutBtn" type="button" style="background:var(--surface-alt); color:var(--ink); flex-shrink:0;">+ Add</button>
+        </div>
+        <div id="blackoutList" class="unscheduled-list"></div>
+      </section>
+      <section class="panel" id="sampleDataPanel" hidden data-edit-only>
+        <button class="btn btn-ghost btn-block" id="clearSampleBtn" type="button" style="background:var(--surface-alt); color:var(--ink);">Clear example items</button>
+      </section>
+    </aside>
+
+    <main class="content">
+      <div class="view" id="monthView">
+        <div class="weekday-row" id="weekdayRow"></div>
+        <div class="month-grid" id="monthGrid"></div>
+      </div>
+      <div class="view" id="timelineView" hidden>
+        <div class="timeline-scroll" id="timelineScroll">
+          <div class="timeline-grid" id="timelineGrid"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="backdrop" id="backdrop" hidden></div>
+
+  <div class="modal-wrap" id="modalWrap" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-head">
+        <h2 id="modalTitle">New Item</h2>
+        <button class="btn btn-icon btn-ghost" id="modalCloseBtn" type="button" style="background:var(--surface-alt); color:var(--ink);" aria-label="Close">×</button>
+      </div>
+      <form id="itemForm" class="modal-body">
+        <label class="field">
+          <span class="field-label" id="titleFieldLabel">Title</span>
+          <input type="text" id="fieldTitle" class="input" maxlength="120" placeholder="e.g. Q4 client blog post">
+        </label>
+        <div class="check-row">
+          <label class="field field-check">
+            <input type="checkbox" id="fieldIsBlackout">
+            <span>Blackout date</span>
+          </label>
+          <label class="field field-check" id="unscheduledFieldWrap">
+            <input type="checkbox" id="fieldUnscheduled">
+            <span>Unscheduled</span>
+          </label>
+        </div>
+        <label class="field" id="categoryFieldWrap">
+          <span class="field-label">Category</span>
+          <div class="select-with-swatch">
+            <span id="fieldCategorySwatch" class="swatch"></span>
+            <select id="fieldCategory" class="input"></select>
+          </div>
+        </label>
+        <div class="field-row" id="dateFields">
+          <label class="field">
+            <span class="field-label">Start</span>
+            <input type="date" id="fieldStart" class="input">
+          </label>
+          <label class="field">
+            <span class="field-label">End</span>
+            <input type="date" id="fieldEnd" class="input">
+          </label>
+        </div>
+        <label class="field" id="notesFieldWrap">
+          <span class="field-label">Notes</span>
+          <textarea id="fieldNotes" class="input" rows="3" maxlength="600" placeholder="Optional notes…"></textarea>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-danger" id="deleteItemBtn" hidden>Delete</button>
+          <div class="modal-actions-right">
+            <button type="button" class="btn btn-ghost" id="cancelItemBtn" style="background:var(--surface-alt); color:var(--ink);">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="saveItemBtn">Save</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
