@@ -76,7 +76,7 @@
         </div>
         <p class="panel-hint">Gray out holidays or other blocked-off days on the Monthly Calendar.</p>
         <div style="display:flex; gap:6px; margin-bottom:8px;" data-edit-only>
-          <input type="date" id="blackoutDateInput" class="input" style="flex:1; min-width:0;">
+          <span class="date-field" style="flex:1; min-width:0;"><input type="text" id="blackoutDateInput" class="input date-text" placeholder="MM/DD/YYYY" autocomplete="off" spellcheck="false"><button type="button" class="date-picker-btn" tabindex="-1" aria-label="Open calendar"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg></button><input type="date" class="date-native" tabindex="-1" aria-hidden="true"></span>
           <button class="btn btn-sm btn-ghost" id="addBlackoutBtn" type="button" style="background:var(--surface-alt); color:var(--ink); flex-shrink:0;">+ Add</button>
         </div>
         <div id="blackoutList" class="unscheduled-list"></div>
@@ -132,11 +132,11 @@
         <div class="field-row" id="dateFields">
           <label class="field">
             <span class="field-label">Start</span>
-            <input type="date" id="fieldStart" class="input">
+            <span class="date-field"><input type="text" id="fieldStart" class="input date-text" placeholder="MM/DD/YYYY" autocomplete="off" spellcheck="false"><button type="button" class="date-picker-btn" tabindex="-1" aria-label="Open calendar"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg></button><input type="date" class="date-native" tabindex="-1" aria-hidden="true"></span>
           </label>
           <label class="field">
             <span class="field-label">End</span>
-            <input type="date" id="fieldEnd" class="input">
+            <span class="date-field"><input type="text" id="fieldEnd" class="input date-text" placeholder="MM/DD/YYYY" autocomplete="off" spellcheck="false"><button type="button" class="date-picker-btn" tabindex="-1" aria-label="Open calendar"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg></button><input type="date" class="date-native" tabindex="-1" aria-hidden="true"></span>
           </label>
         </div>
         <label class="field" id="notesFieldWrap">

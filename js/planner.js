@@ -123,7 +123,7 @@ export function initPlanner(opts){
   }
 
   function loadPrefs(){
-    var prefs = {activeView:'month', monthYear:PLANNER_YEAR, timelineYear:PLANNER_YEAR, sidebarOpen:true, hiddenCats:{}};
+    var prefs = {activeView:'month', monthYear:PLANNER_YEAR, timelineYear:PLANNER_YEAR, sidebarOpen:true, hiddenCats:{}, tlLabelW:null};
     try{
       var saved = JSON.parse(localStorage.getItem(PREFS_KEY));
       if(saved) Object.keys(prefs).forEach(function(k){ if(saved[k]!=null) prefs[k] = saved[k]; });
@@ -146,11 +146,12 @@ export function initPlanner(opts){
     state.items = d.items;
     state.blackoutDates = d.blackoutDates;
     // Mid-gesture renders are driven by the gesture itself; the next one picks this up.
-    if(dragState || createDrag || tlCreateDrag) return;
+    if(dragState || createDrag || tlCreateDrag || sortDrag || colResize) return;
     render();
   }
 
   function isCatHidden(id){ return !!state.settings.hiddenCats[id]; }
+  function displayedYear(){ return state.settings.activeView==='month' ? state.settings.monthYear : state.settings.timelineYear; }
 
   function getCategory(id){
     for(var i=0;i<state.categories.length;i++){ if(state.categories[i].id===id) return state.categories[i]; }
@@ -229,8 +230,10 @@ export function initPlanner(opts){
     categoryListEl.innerHTML = state.categories.map(function(c){
       var hidden = isCatHidden(c.id);
       var lockAttrs = (c.locked || !canEdit) ? 'disabled' : '';
+      var sortable = canEdit && !c.locked;
       return '' +
-        '<div class="category-row'+(hidden?' hidden-cat':'')+'" data-cat-id="'+c.id+'">' +
+        '<div class="category-row'+(hidden?' hidden-cat':'')+'" data-cat-id="'+c.id+'"'+(sortable ? ' data-sort-id="'+c.id+'"' : '')+'>' +
+          (sortable ? '<span class="drag-grip" data-role="cat-grip" title="Drag to reorder">'+GRIP_SVG+'</span>' : '') +
           '<div class="cat-row-top">' +
             '<input type="checkbox" class="cat-toggle" title="Show/hide on calendar" '+(hidden?'':'checked')+' data-action="toggle-cat">' +
             '<button type="button" class="cat-color-btn" style="background:'+c.color+'" data-action="pick-color" title="Choose color"></button>' +
@@ -263,9 +266,12 @@ export function initPlanner(opts){
   }
 
   function renderBlackoutList(){
-    var list = (state.blackoutDates||[]).slice().sort(function(a,b){ return (a.start||'').localeCompare(b.start||''); });
+    var year = displayedYear(), yearStart = year+'-01-01', yearEnd = year+'-12-31';
+    var list = (state.blackoutDates||[]).filter(function(b){
+      return b.start <= yearEnd && (b.end||b.start) >= yearStart;
+    }).sort(function(a,b){ return (a.start||'').localeCompare(b.start||''); });
     if(!list.length){
-      blackoutListEl.innerHTML = '<div class="un-empty">No blackout dates yet.</div>';
+      blackoutListEl.innerHTML = '<div class="un-empty">No blackout dates in '+year+'.</div>';
       return;
     }
     blackoutListEl.innerHTML = list.map(function(b){
@@ -284,6 +290,9 @@ export function initPlanner(opts){
     });
   }
   function escapeAttr(s){ return escapeHtml(s); }
+  var GRIP_SVG = '<svg width="8" height="12" viewBox="0 0 8 12" aria-hidden="true"><g fill="currentColor">' +
+    '<circle cx="2" cy="2" r="1.1"/><circle cx="6" cy="2" r="1.1"/><circle cx="2" cy="6" r="1.1"/>' +
+    '<circle cx="6" cy="6" r="1.1"/><circle cx="2" cy="10" r="1.1"/><circle cx="6" cy="10" r="1.1"/></g></svg>';
 
   /* ================= Month view render (continuous full-year scroll) ================= */
   function createDragRange(){
@@ -368,7 +377,10 @@ export function initPlanner(opts){
           var tc = textColorFor(cat.color);
           var dragging = dragState && dragState.itemId===it.id ? ' is-dragging' : '';
           return '<div class="chip'+dragging+'" data-item-id="'+it.id+'" data-role="chip" style="background:'+cat.color+';color:'+tc+'">'+
-            escapeHtml(it.title) + (it.notes ? '<span class="note-dot"></span>' : '') + '</div>';
+            '<div class="bar-handle" data-role="handle-start"></div>' +
+            '<div class="bar-body">'+escapeHtml(it.title) + (it.notes ? '<span class="note-dot"></span>' : '')+'</div>' +
+            '<div class="bar-handle" data-role="handle-end"></div>' +
+          '</div>';
         }).join('');
         return '<div class="day-cell'+(isToday?' is-today':'')+(isWeekend?' is-weekend':'')+(isBlackout?' is-blackout':'')+(isSelecting?' is-selecting':'')+'" data-date="'+iso(day)+'">' +
           '<div class="day-num-row"><span class="day-num" style="background:'+mc+';color:'+dtc+'">'+day.getDate()+'</span></div>' +
@@ -413,7 +425,9 @@ export function initPlanner(opts){
   }
 
   /* ================= Timeline view render ================= */
-  var TL_COLW = 34, TL_LABELW = 168;
+  var TL_COLW = 34, TL_LABELW_DEFAULT = 168, TL_LABELW_MIN = 120, TL_LABELW_MAX = 520;
+  var TL_LABELW = TL_LABELW_DEFAULT; // per-viewer, resizable; synced from prefs on each render
+  var COL_RESIZE_HTML = '<div class="tl-col-resize" data-role="tl-col-resize" title="Drag to resize"></div>';
   /* Manual row order for the Timeline: any item missing a tlOrder (new items, or
      items saved before this feature existed) gets one appended, ranked by start date
      the first time it's seen, so the list starts sensible but stays freely reorderable. */
@@ -423,20 +437,17 @@ export function initPlanner(opts){
     missing.sort(function(a,b){ return (a.start||'').localeCompare(b.start||''); });
     missing.forEach(function(it){ maxOrder++; it.tlOrder = maxOrder; });
   }
-  function reorderTimelineItem(id, dir){
-    ensureTimelineOrder(state.items);
-    var shown = visibleItems().filter(function(it){ return it.start; });
-    shown.sort(function(a,b){ return (a.tlOrder||0)-(b.tlOrder||0); });
-    var idx = shown.findIndex(function(it){ return it.id===id; });
-    var swapIdx = idx+dir;
-    if(idx<0 || swapIdx<0 || swapIdx>=shown.length) return;
-    var tmp = shown[idx].tlOrder;
-    shown[idx].tlOrder = shown[swapIdx].tlOrder;
-    shown[swapIdx].tlOrder = tmp;
+  /* ids: the displayed rows in their new order. They trade tlOrder slots among
+     themselves, so rows from other years or hidden categories keep their place. */
+  function reorderTimelineRows(ids){
+    var rows = ids.map(findItem);
+    var slots = rows.map(function(it){ return it.tlOrder; }).sort(function(a,b){ return a-b; });
+    rows.forEach(function(it, i){ it.tlOrder = slots[i]; });
     saveState();
     render();
   }
   function renderTimeline(){
+    TL_LABELW = state.settings.tlLabelW || TL_LABELW_DEFAULT;
     var year = state.settings.timelineYear;
     periodLabel.textContent = String(year);
     var weeks = getYearWeeks(year);
@@ -468,7 +479,7 @@ export function initPlanner(opts){
       if(bands.length && bands[bands.length-1].key===key){ bands[bands.length-1].count++; }
       else bands.push({key:key, month:w.getMonth(), start:i, count:1});
     });
-    var bandHtml = '<div class="tl-cell tl-corner" style="grid-row:1; grid-column:1;"></div>';
+    var bandHtml = '<div class="tl-cell tl-corner" style="grid-row:1; grid-column:1;">'+COL_RESIZE_HTML+'</div>';
     bands.forEach(function(b){
       var mc = monthColor(b.month), tc = textColorFor(mc);
       bandHtml += '<div class="tl-cell tl-month-band" style="grid-row:1; grid-column:'+(2+b.start)+' / '+(2+b.start+b.count)+'; background:'+mc+'; color:'+tc+';">'+MONTH_SHORT[b.month]+'</div>';
@@ -493,7 +504,7 @@ export function initPlanner(opts){
     }
 
     // week label row
-    var weekLabelHtml = '<div class="tl-cell tl-corner tl-week-label" style="grid-row:2; grid-column:1; font-weight:700;">Item</div>';
+    var weekLabelHtml = '<div class="tl-cell tl-corner tl-week-label" style="grid-row:2; grid-column:1; font-weight:700;">Item'+COL_RESIZE_HTML+'</div>';
     weeks.forEach(function(w,i){
       weekLabelHtml += '<div class="tl-cell tl-week-label" style="grid-row:2; grid-column:'+(2+i)+';">'+(w.getMonth()+1)+'/'+w.getDate()+'</div>';
     });
@@ -521,13 +532,11 @@ export function initPlanner(opts){
         var rowN = rowIdx+3;
         var dragging = dragState && dragState.itemId===it.id ? ' is-dragging' : '';
         var compact = width < 68;
-        rowsHtml += '<div class="tl-cell tl-label" style="grid-row:'+rowN+'; grid-column:1;" data-item-id="'+it.id+'" data-role="tl-label">' +
+        rowsHtml += '<div class="tl-cell tl-label" style="grid-row:'+rowN+'; grid-column:1;" data-item-id="'+it.id+'" data-sort-id="'+it.id+'" data-role="tl-label"'+(canEdit ? ' title="Drag to reorder, or click to edit"' : '')+'>' +
+          (canEdit ? '<span class="drag-grip">'+GRIP_SVG+'</span>' : '') +
           '<span class="dot" style="background:'+cat.color+'"></span>' +
           '<span class="tl-title">'+escapeHtml(it.title)+(it.notes?'<span class="note-dot" style="color:var(--ink-faint)"></span>':'')+'</span>' +
-          (canEdit ? '<span class="tl-reorder">' +
-            '<button type="button" class="tl-reorder-btn" data-action="tl-up" data-item-id="'+it.id+'" title="Move up"'+(rowIdx===0?' disabled':'')+'>▲</button>' +
-            '<button type="button" class="tl-reorder-btn" data-action="tl-down" data-item-id="'+it.id+'" title="Move down"'+(rowIdx===scheduled.length-1?' disabled':'')+'>▼</button>' +
-          '</span>' : '') +
+          COL_RESIZE_HTML +
         '</div>';
         rowsHtml += '<div class="tl-track tl-track-row" style="grid-row:'+rowN+'; grid-column:2 / -1;">' +
           (todayCol>=0 ? '<div class="tl-today-strip" style="left:'+(todayCol*TL_COLW)+'px; width:'+TL_COLW+'px;"></div>' : '') +
@@ -545,7 +554,7 @@ export function initPlanner(opts){
     // for creating new items anywhere on the timeline, not just on top of existing rows.
     var addRowN = scheduled.length + 3;
     rowsHtml += '<div class="tl-cell tl-label tl-add-label" style="grid-row:'+addRowN+'; grid-column:1;">' +
-      (scheduled.length ? '' : 'No scheduled items yet.') +
+      (scheduled.length ? '' : 'No scheduled items yet.') + COL_RESIZE_HTML +
     '</div>';
     rowsHtml += '<div class="tl-track tl-add-row" style="grid-row:'+addRowN+'; grid-column:2 / -1;" data-role="tl-add-row"></div>';
 
@@ -620,6 +629,12 @@ export function initPlanner(opts){
       previewStart: item.start, previewEnd: item.end || item.start,
       lastUnitKey: null, anchorSet:false
     };
+    // Anchor on the day/week under the press itself, so a fast first move can't shift it.
+    var unit = unitUnderPointer(e);
+    if(unit){
+      dragState.anchorDate = unit.date; dragState.anchorCol = unit.colIdx;
+      dragState.anchorSet = true; dragState.lastUnitKey = unit.key;
+    }
     document.addEventListener('pointermove', onDragMove);
     document.addEventListener('pointerup', onDragEnd);
     document.addEventListener('pointercancel', onDragEnd);
@@ -629,7 +644,9 @@ export function initPlanner(opts){
     var target = document.elementFromPoint(e.clientX, e.clientY);
     if(!target) return null;
     if(dragState.view==='month'){
-      var cell = target.closest('[data-date]');
+      // Bars float above the day cells, so look through every layer under the pointer.
+      var cell = null;
+      document.elementsFromPoint(e.clientX, e.clientY).some(function(node){ return (cell = node.closest('[data-date]')); });
       if(!cell) return null;
       return {key:cell.dataset.date, date: parseISO(cell.dataset.date)};
     } else {
@@ -751,12 +768,17 @@ export function initPlanner(opts){
   attachDragSource(monthGrid);
   attachDragSource(timelineGrid);
 
+  /* Timeline label column: drag a row to reorder it, or drag the column's edge to resize.
+     Registered before the create-drag listener below so it can claim the press first. */
+  timelineGrid.addEventListener('pointerdown', function(e){
+    if(e.target.closest('[data-role="tl-col-resize"]')){ e.preventDefault(); beginColResize(e); return; }
+    var lbl = e.target.closest('[data-role="tl-label"]');
+    if(lbl && canEdit){ e.preventDefault(); beginSortDrag(e, lbl, timelineGrid, '[data-role="tl-label"]', reorderTimelineRows); }
+  });
+
   timelineGrid.addEventListener('click', function(e){
-    var reorderBtn = e.target.closest('[data-action="tl-up"], [data-action="tl-down"]');
-    if(reorderBtn){
-      reorderTimelineItem(reorderBtn.dataset.itemId, reorderBtn.dataset.action==='tl-up' ? -1 : 1);
-      return;
-    }
+    // A press that ended a reorder or resize isn't a click on the label.
+    if(Date.now() < suppressClickUntil || e.target.closest('[data-role="tl-col-resize"]')) return;
     var lbl = e.target.closest('[data-role="tl-label"]');
     if(lbl && !dragState) openItemModal(lbl.dataset.itemId);
   });
@@ -856,6 +878,135 @@ export function initPlanner(opts){
     beginDrag(e, chip.dataset.itemId, 'schedule-new');
   });
 
+  /* ================= Drag-to-reorder (categories, Timeline rows) ================= */
+  /* Rows carry data-sort-id. A press that doesn't move stays a click; once it moves,
+     a line marks the drop spot and onDrop gets every row's id in the new order. */
+  var sortDrag = null; // {root, rowSel, row, id, downX, downY, moved, target, after, onDrop}
+  var suppressClickUntil = 0;
+
+  function beginSortDrag(e, row, root, rowSel, onDrop){
+    sortDrag = {root:root, rowSel:rowSel, row:row, id:row.dataset.sortId, downX:e.clientX, downY:e.clientY,
+      moved:false, target:null, after:false, onDrop:onDrop};
+    document.addEventListener('pointermove', onSortMove);
+    document.addEventListener('pointerup', onSortEnd);
+    document.addEventListener('pointercancel', onSortEnd);
+  }
+  function sortRows(){ return Array.prototype.slice.call(sortDrag.root.querySelectorAll(sortDrag.rowSel)); }
+  function clearDropMark(){ if(sortDrag.target) sortDrag.target.classList.remove('is-drop-before','is-drop-after'); }
+  function onSortMove(e){
+    var sd = sortDrag;
+    if(!sd) return;
+    if(!sd.moved){
+      if(Math.abs(e.clientX-sd.downX)+Math.abs(e.clientY-sd.downY) < 4) return;
+      sd.moved = true;
+      document.body.classList.add('dragging');
+      sd.row.classList.add('is-sorting');
+    }
+    var rows = sortRows();
+    var target = rows[rows.length-1], after = true;
+    for(var i=0;i<rows.length;i++){
+      var r = rows[i].getBoundingClientRect();
+      if(e.clientY < r.bottom){ target = rows[i]; after = e.clientY > r.top + r.height/2; break; }
+    }
+    clearDropMark();
+    sd.target = target; sd.after = after;
+    target.classList.add(after ? 'is-drop-after' : 'is-drop-before');
+  }
+  function onSortEnd(){
+    var sd = sortDrag;
+    if(!sd) return;
+    document.removeEventListener('pointermove', onSortMove);
+    document.removeEventListener('pointerup', onSortEnd);
+    document.removeEventListener('pointercancel', onSortEnd);
+    document.body.classList.remove('dragging');
+    sd.row.classList.remove('is-sorting');
+    clearDropMark();
+    var ids = sortRows().map(function(r){ return r.dataset.sortId; });
+    sortDrag = null;
+    if(!sd.moved || !sd.target) return;
+    suppressClickUntil = Date.now() + 300;
+    ids = ids.filter(function(id){ return id!==sd.id; });
+    var idx = ids.indexOf(sd.target.dataset.sortId);
+    if(idx===-1) return; // dropped on itself
+    ids.splice(idx + (sd.after ? 1 : 0), 0, sd.id);
+    sd.onDrop(ids);
+  }
+
+  /* ================= Timeline label column resize ================= */
+  var colResize = null; // {downX, startW}
+  function beginColResize(e){
+    colResize = {downX:e.clientX, startW:TL_LABELW};
+    document.body.classList.add('col-resizing');
+    document.addEventListener('pointermove', onColResizeMove);
+    document.addEventListener('pointerup', onColResizeEnd);
+    document.addEventListener('pointercancel', onColResizeEnd);
+  }
+  function onColResizeMove(e){
+    if(!colResize) return;
+    var w = Math.round(Math.min(TL_LABELW_MAX, Math.max(TL_LABELW_MIN, colResize.startW + e.clientX - colResize.downX)));
+    if(w===state.settings.tlLabelW) return;
+    state.settings.tlLabelW = w;
+    renderTimeline();
+  }
+  function onColResizeEnd(){
+    if(!colResize) return;
+    document.removeEventListener('pointermove', onColResizeMove);
+    document.removeEventListener('pointerup', onColResizeEnd);
+    document.removeEventListener('pointercancel', onColResizeEnd);
+    document.body.classList.remove('col-resizing');
+    colResize = null;
+    suppressClickUntil = Date.now() + 300;
+    saveState();
+  }
+
+  /* ================= Typed date fields ================= */
+  /* Date fields are text inputs so a date can be typed (10/15/2027, 10/15/27, 10/15,
+     Oct 15, 15 Oct 2027, 2027-10-15), with a button that opens the browser's native
+     calendar picker. A date typed without a year lands in the year on screen. */
+  var MONTH_LOOKUP = {};
+  MONTH_SHORT.forEach(function(m,i){ MONTH_LOOKUP[m.toLowerCase()] = i; });
+
+  /* Returns 'YYYY-MM-DD', '' for an empty field, or null if it can't be read as a date. */
+  function parseDateText(text){
+    var s = String(text||'').trim().toLowerCase().replace(/(\d)(st|nd|rd|th)\b/g,'$1').replace(/,/g,' ').replace(/\s+/g,' ');
+    if(!s) return '';
+    var y, m, d, match;
+    if((match = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))){ y=match[1]; m=+match[2]-1; d=+match[3]; }
+    else if((match = s.match(/^(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2}|\d{4}))?$/))){ m=+match[1]-1; d=+match[2]; y=match[3]; }
+    else if((match = s.match(/^([a-z]{3})[a-z]*\.? (\d{1,2})(?: (\d{2}|\d{4}))?$/))){ m=MONTH_LOOKUP[match[1]]; d=+match[2]; y=match[3]; }
+    else if((match = s.match(/^(\d{1,2}) ([a-z]{3})[a-z]*\.?(?: (\d{2}|\d{4}))?$/))){ d=+match[1]; m=MONTH_LOOKUP[match[2]]; y=match[3]; }
+    else return null;
+    if(m==null) return null;
+    y = (y==null) ? displayedYear() : (y.length===2 ? 2000 + +y : +y);
+    var dt = new Date(y, m, d);
+    if(dt.getFullYear()!==y || dt.getMonth()!==m || dt.getDate()!==d) return null; // e.g. 2/30
+    return iso(dt);
+  }
+  function formatDateText(isoStr){ var p = isoStr.split('-'); return p[1]+'/'+p[2]+'/'+p[0]; }
+  function getDateField(input){ return parseDateText(input.value); }
+  function setDateField(input, isoStr){
+    input.value = isoStr ? formatDateText(isoStr) : '';
+    input.classList.remove('is-invalid');
+  }
+
+  document.querySelectorAll('.date-field').forEach(function(wrap){
+    var text = wrap.querySelector('.date-text');
+    var native = wrap.querySelector('.date-native');
+    text.addEventListener('change', function(){
+      var v = parseDateText(text.value);
+      if(v) setDateField(text, v);
+      else text.classList.toggle('is-invalid', v===null);
+    });
+    text.addEventListener('input', function(){ text.classList.remove('is-invalid'); });
+    wrap.querySelector('.date-picker-btn').addEventListener('click', function(){
+      native.value = getDateField(text) || '';
+      try{ native.showPicker(); }catch(err){ native.focus(); native.click(); }
+    });
+    native.addEventListener('change', function(){
+      if(native.value) setDateField(text, native.value);
+    });
+  });
+
   /* ================= Modal logic ================= */
   var editingId = null;
   var editingKind = null; // 'item' | 'blackout' | null (new)
@@ -869,8 +1020,8 @@ export function initPlanner(opts){
     fieldTitle.value = item.title;
     renderCategorySelect(item.categoryId);
     fieldUnscheduled.checked = !item.start;
-    fieldStart.value = item.start || '';
-    fieldEnd.value = item.end || item.start || '';
+    setDateField(fieldStart, item.start || '');
+    setDateField(fieldEnd, item.end || item.start || '');
     fieldNotes.value = item.notes || '';
     deleteItemBtn.hidden = false;
     deleteItemBtn.classList.remove('confirming');
@@ -886,8 +1037,8 @@ export function initPlanner(opts){
     fieldIsBlackout.checked = true;
     toggleItemMode();
     fieldTitle.value = b.label || '';
-    fieldStart.value = b.start;
-    fieldEnd.value = b.end || b.start;
+    setDateField(fieldStart, b.start);
+    setDateField(fieldEnd, b.end || b.start);
     deleteItemBtn.hidden = false;
     deleteItemBtn.classList.remove('confirming');
     deleteItemBtn.textContent = 'Delete';
@@ -903,8 +1054,8 @@ export function initPlanner(opts){
     renderCategorySelect(firstCat.id);
     var hasDate = prefill && prefill.start;
     fieldUnscheduled.checked = false;
-    fieldStart.value = hasDate ? prefill.start : iso(TODAY);
-    fieldEnd.value = hasDate ? (prefill.end||prefill.start) : iso(TODAY);
+    setDateField(fieldStart, hasDate ? prefill.start : iso(TODAY));
+    setDateField(fieldEnd, hasDate ? (prefill.end||prefill.start) : iso(TODAY));
     fieldNotes.value = '';
     deleteItemBtn.hidden = true;
     toggleDateFields();
@@ -952,10 +1103,15 @@ export function initPlanner(opts){
   itemForm.addEventListener('submit', function(e){
     e.preventDefault();
     if(!canEdit) return;
+    var startVal = getDateField(fieldStart), endVal = getDateField(fieldEnd);
+    if(fieldIsBlackout.checked || !fieldUnscheduled.checked){
+      var badField = startVal===null ? fieldStart : endVal===null ? fieldEnd : null;
+      if(badField){ badField.classList.add('is-invalid'); badField.focus(); badField.select(); return; }
+    }
     if(fieldIsBlackout.checked){
       var label = fieldTitle.value.trim();
-      var boStart = fieldStart.value || iso(TODAY);
-      var boEnd = fieldEnd.value || boStart;
+      var boStart = startVal || iso(TODAY);
+      var boEnd = endVal || boStart;
       if(boEnd < boStart) boEnd = boStart;
       if(editingKind==='blackout' && editingId){
         var b = findBlackout(editingId);
@@ -972,8 +1128,8 @@ export function initPlanner(opts){
     var title = fieldTitle.value.trim();
     if(!title) return;
     var scheduled = !fieldUnscheduled.checked;
-    var start = scheduled ? (fieldStart.value || iso(TODAY)) : null;
-    var end = scheduled ? (fieldEnd.value || start) : null;
+    var start = scheduled ? (startVal || iso(TODAY)) : null;
+    var end = scheduled ? (endVal || start) : null;
     if(scheduled && end < start){ end = start; }
     if(editingKind==='item' && editingId){
       var item = findItem(editingId);
@@ -1067,6 +1223,18 @@ export function initPlanner(opts){
     }
   });
 
+  categoryListEl.addEventListener('pointerdown', function(e){
+    var grip = e.target.closest('[data-role="cat-grip"]');
+    if(!grip || !canEdit) return;
+    e.preventDefault();
+    beginSortDrag(e, grip.closest('.category-row'), categoryListEl, '.category-row[data-sort-id]', function(ids){
+      // Locked categories (Uncategorized) aren't draggable and stay pinned at the end.
+      var moved = ids.map(getCategory);
+      state.categories = moved.concat(state.categories.filter(function(c){ return ids.indexOf(c.id)===-1; }));
+      saveState(); render();
+    });
+  });
+
   el('addCategoryBtn').addEventListener('click', function(){
     var used = state.categories.map(function(c){return c.color;});
     var color = PALETTE.find(function(p){ return used.indexOf(p)===-1; }) || PALETTE[state.categories.length % PALETTE.length];
@@ -1077,14 +1245,16 @@ export function initPlanner(opts){
     if(input){ input.focus(); input.select(); }
   });
 
-  el('addBlackoutBtn').addEventListener('click', function(){
-    var v = blackoutDateInput.value;
-    if(!v) return;
+  function addSidebarBlackout(){
+    var v = getDateField(blackoutDateInput);
+    if(!v){ if(v===null){ blackoutDateInput.classList.add('is-invalid'); blackoutDateInput.focus(); } return; }
     state.blackoutDates = state.blackoutDates || [];
     state.blackoutDates.push({id:uid('bo'), start:v, end:v, label:''});
     saveState(); render();
-    blackoutDateInput.value = '';
-  });
+    setDateField(blackoutDateInput, '');
+  }
+  el('addBlackoutBtn').addEventListener('click', addSidebarBlackout);
+  blackoutDateInput.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); addSidebarBlackout(); } });
   blackoutListEl.addEventListener('click', function(e){
     var delBtn = e.target.closest('[data-action="del-blackout"]');
     if(delBtn){
