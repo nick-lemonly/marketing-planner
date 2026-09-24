@@ -358,7 +358,7 @@ export function initPlanner(opts){
         seg.lane = laneIdx;
       });
       var laneCount = lanes.length;
-      var laneAreaH = laneCount * 20;
+      var laneAreaH = 'calc(var(--lane-pitch) * '+laneCount+')';
 
       var dayCellsHtml = week.map(function(day){
         var isToday = sameISO(day, TODAY);
@@ -383,9 +383,10 @@ export function initPlanner(opts){
           '</div>';
         }).join('');
         return '<div class="day-cell'+(isToday?' is-today':'')+(isWeekend?' is-weekend':'')+(isBlackout?' is-blackout':'')+(isSelecting?' is-selecting':'')+'" data-date="'+iso(day)+'">' +
-          '<div class="day-num-row"><span class="day-num" style="background:'+mc+';color:'+dtc+'">'+day.getDate()+'</span></div>' +
-          (blackoutEntry && blackoutEntry.label ? '<div class="blackout-label">'+escapeHtml(blackoutEntry.label)+'</div>' : '') +
-          '<div class="lane-spacer" style="height:'+laneAreaH+'px"></div>' +
+          '<div class="day-num-row"><span class="day-num" style="background:'+mc+';color:'+dtc+'">'+day.getDate()+'</span>' +
+            (blackoutEntry && blackoutEntry.label ? '<span class="blackout-label">'+escapeHtml(blackoutEntry.label)+'</span>' : '') +
+          '</div>' +
+          '<div class="lane-spacer" style="height:'+laneAreaH+'"></div>' +
           '<div class="chips">'+chipsHtml+'</div>' +
         '</div>';
       }).join('');
@@ -393,14 +394,20 @@ export function initPlanner(opts){
       var barsHtml = multi.map(function(seg){
         var cat = getCategory(seg.item.categoryId);
         var tc = textColorFor(cat.color);
-        var leftPct = (seg.colStart/7*100);
-        var widthPct = ((seg.colEnd-seg.colStart+1)/7*100);
+        // Match the day cells' geometry (7 columns, 2px gaps, --cell-inset padding) so a bar
+        // lines up with single-day chips; a segment continuing into the next/previous week
+        // runs to the cell's outer edge instead.
+        var span = seg.colEnd-seg.colStart+1;
+        var insetL = seg.openStart ? '0px' : 'var(--cell-inset)';
+        var insetR = seg.openEnd ? '0px' : 'var(--cell-inset)';
+        var leftCss = 'calc((100% - 12px) * '+seg.colStart+' / 7 + '+(seg.colStart*2)+'px + '+insetL+')';
+        var widthCss = 'calc((100% - 12px) * '+span+' / 7 + '+((span-1)*2)+'px - '+insetL+' - '+insetR+')';
         var dragging = dragState && dragState.itemId===seg.item.id ? ' is-dragging' : '';
         var radius = 'border-radius:5px;';
         if(seg.openStart && seg.openEnd) radius='border-radius:0;';
         else if(seg.openStart) radius='border-radius:0 5px 5px 0;';
         else if(seg.openEnd) radius='border-radius:5px 0 0 5px;';
-        return '<div class="bar'+dragging+'" data-item-id="'+seg.item.id+'" data-role="bar" style="left:'+leftPct+'%; width:'+widthPct+'%; top:'+(seg.lane*20)+'px; background:'+cat.color+'; color:'+tc+'; '+radius+'">' +
+        return '<div class="bar'+dragging+'" data-item-id="'+seg.item.id+'" data-role="bar" style="left:'+leftCss+'; width:'+widthCss+'; top:calc(var(--lane-pitch) * '+seg.lane+'); background:'+cat.color+'; color:'+tc+'; '+radius+'">' +
           (seg.openStart ? '' : '<div class="bar-handle" data-role="handle-start"></div>') +
           '<div class="bar-body" data-role="bar-body">'+escapeHtml(seg.item.title)+(seg.item.notes?'<span class="note-dot"></span>':'')+'</div>' +
           (seg.openEnd ? '' : '<div class="bar-handle" data-role="handle-end"></div>') +
@@ -408,7 +415,7 @@ export function initPlanner(opts){
       }).join('');
 
       parts.push('<div class="week-row" data-week-start="'+iso(weekStart)+'">' + dayCellsHtml +
-        '<div class="lanes-overlay" style="height:'+laneAreaH+'px">'+barsHtml+'</div>' +
+        '<div class="lanes-overlay" style="height:'+laneAreaH+'">'+barsHtml+'</div>' +
       '</div>');
     });
 

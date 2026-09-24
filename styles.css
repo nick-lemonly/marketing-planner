@@ -190,7 +190,16 @@ body:not(.read-only) .category-row{padding-left:22px;}
   font-weight:800; font-size:14px; letter-spacing:.3px;
 }
 .month-header .yr{font-size:11px; font-weight:600; opacity:.75;}
-.month-grid{display:flex; flex-direction:column; gap:4px;}
+.month-grid{
+  display:flex; flex-direction:column; gap:4px;
+  /* Shared geometry for single-day chips (in the cell flow) and multi-day bars (in the
+     overlay), so both sit on the same rows at the same size. */
+  --daynum-h:20px;
+  --item-h:20px;
+  --item-gap:2px;
+  --lane-pitch:calc(var(--item-h) + var(--item-gap));
+  --cell-inset:5px; /* day-cell border + padding */
+}
 .week-row{display:flex; position:relative; gap:2px;}
 .day-cell{
   flex:1 1 0; min-width:0; background:var(--surface); border:1px solid var(--border); border-radius:8px;
@@ -198,32 +207,34 @@ body:not(.read-only) .category-row{padding-left:22px;}
 }
 .day-cell.is-weekend, .day-cell.is-blackout{background:var(--surface-alt);}
 .blackout-label{
+  flex:1; min-width:0; margin-left:5px; text-align:right;
   font-size:9px; font-weight:700; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.3px;
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .day-cell.is-selecting{background:var(--coral-soft); border-color:var(--coral); border-style:dashed;}
-.day-num-row{display:flex; align-items:center; justify-content:space-between; height:20px; margin-bottom:2px;}
+.day-num-row{display:flex; align-items:center; justify-content:space-between; height:var(--daynum-h); margin-bottom:2px;}
 .day-num{
   font-size:11px; font-weight:800; padding:1px 6px; border-radius:5px; line-height:16px;
 }
 .day-cell.is-today .day-num{box-shadow:0 0 0 2px var(--ink) inset;}
 .day-cell.is-today{background:var(--today-tint);}
 .lane-spacer{width:100%;}
-.chips{display:flex; flex-direction:column; gap:2px; margin-top:2px;}
+.chips{display:flex; flex-direction:column; gap:var(--item-gap); margin-top:var(--item-gap);}
 .chip, .bar{
-  border-radius:5px; font-size:10.5px; font-weight:700; padding:2px 5px; line-height:14px;
+  display:flex; align-items:center; box-sizing:border-box; height:var(--item-h); padding:0;
+  border-radius:5px; font-size:10.5px; font-weight:700; line-height:14px;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:grab; touch-action:none; border:1px solid rgba(0,0,0,0.08);
 }
-.chip{display:flex; align-items:center; padding:2px 0;}
-.chip .bar-body{padding:0 1px;}
+.chip .bar-body, .bar .bar-body{padding:0 1px;}
 .chip.is-dragging, .bar.is-dragging{opacity:.55; outline:2px dashed rgba(0,0,0,0.3);}
 .note-dot{display:inline-block; width:4px; height:4px; border-radius:50%; background:currentColor; opacity:.7; margin-left:3px; vertical-align:middle;}
 
-.lanes-overlay{position:absolute; left:0; right:0; top:22px; pointer-events:none;}
-.lanes-overlay .bar{
-  position:absolute; height:16px; display:flex; align-items:center; box-sizing:border-box;
-  pointer-events:auto;
+.lanes-overlay{
+  position:absolute; left:0; right:0; pointer-events:none;
+  /* Lines up with where .chips starts: cell inset + day number row + its margin + chips' margin. */
+  top:calc(var(--cell-inset) + var(--daynum-h) + 2px + var(--item-gap));
 }
+.lanes-overlay .bar{position:absolute; pointer-events:auto;}
 .bar-body{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; padding-left:2px;}
 .bar-handle{width:7px; align-self:stretch; cursor:ew-resize; flex-shrink:0; display:flex; align-items:center; justify-content:center;}
 .bar-handle:hover{background:rgba(255,255,255,0.35);}
@@ -370,9 +381,9 @@ body.read-only .cat-color-btn{cursor:default;}
   .period-label{min-width:120px; font-size:13px;}
 }
 @media (max-width:520px){
-  .day-num-row{height:16px;}
+  .month-grid{--daynum-h:16px; --item-h:17px;}
   .day-num{font-size:10px;}
-  .chip,.bar{font-size:9px; padding:1px 3px;}
+  .chip,.bar{font-size:9px;}
   .tab-btn{font-size:12px; padding:6px 10px;}
   .topbar-row{padding:8px 10px;}
 }
