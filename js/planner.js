@@ -437,17 +437,6 @@ export function initPlanner(opts){
   var TL_LABELW = TL_LABELW_DEFAULT; // per-viewer, resizable; synced from prefs on each render
   var TL_LANE_PITCH = 28; // category rows stack overlapping bars in lanes this far apart
   var COL_RESIZE_HTML = '<div class="tl-col-resize" data-role="tl-col-resize" title="Drag to resize"></div>';
-  /* Manual row order for the Timeline: any item missing a tlOrder (new items, or
-     items saved before this feature existed) gets one appended, ranked by start date
-     the first time it's seen, so the list starts sensible but stays freely reorderable. */
-  function ensureTimelineOrder(itemsList){
-    var maxOrder = itemsList.reduce(function(m,it){ return typeof it.tlOrder==='number' ? Math.max(m,it.tlOrder) : m; }, -1);
-    var missing = itemsList.filter(function(it){ return typeof it.tlOrder !== 'number'; });
-    missing.sort(function(a,b){ return (a.start||'').localeCompare(b.start||''); });
-    missing.forEach(function(it){ maxOrder++; it.tlOrder = maxOrder; });
-  }
-  /* ids: the displayed rows in their new order. They trade tlOrder slots among
-     themselves, so rows from other years or hidden categories keep their place. */
   /* ids: the sortable categories in their new order. Locked ones (Uncategorized)
      aren't draggable and stay pinned at the end. Hidden categories aren't shown on the
      Timeline, so any left out of ids keep their place after the ones that were. */
@@ -455,13 +444,6 @@ export function initPlanner(opts){
     var moved = ids.map(getCategory);
     state.categories = moved.concat(state.categories.filter(function(c){ return ids.indexOf(c.id)===-1; }));
     saveState(); render();
-  }
-  function reorderTimelineRows(ids){
-    var rows = ids.map(findItem);
-    var slots = rows.map(function(it){ return it.tlOrder; }).sort(function(a,b){ return a-b; });
-    rows.forEach(function(it, i){ it.tlOrder = slots[i]; });
-    saveState();
-    render();
   }
   function renderTimeline(){
     TL_LABELW = state.settings.tlLabelW || TL_LABELW_DEFAULT;
@@ -530,7 +512,6 @@ export function initPlanner(opts){
     var todayCol = (TODAY.getFullYear()===year || (TODAY >= weeks[0] && TODAY <= addDays(weeks[N-1],6))) ? colForDate(TODAY) : -1;
 
     var rowsHtml = '';
-    ensureTimelineOrder(state.items);
     var rangeStart = weeks[0], rangeEnd = addDays(weeks[N-1], 6);
     // Only items that actually overlap the visible year -- otherwise an item from a
     // different year would get clamped onto the near edge, which reads as if it belongs here.
@@ -538,7 +519,10 @@ export function initPlanner(opts){
       if(!it.start) return false;
       var r = effRange(it);
       return r && r.end >= rangeStart && r.start <= rangeEnd;
-    }).sort(function(a,b){ return (a.tlOrder||0)-(b.tlOrder||0); });
+    // Chronological, by saved dates rather than a live drag preview so rows don't jump mid-drag.
+    }).sort(function(a,b){
+      return a.start.localeCompare(b.start) || (a.end||a.start).localeCompare(b.end||b.start) || a.title.localeCompare(b.title);
+    });
 
     var todayStripHtml = todayCol>=0 ? '<div class="tl-today-strip" style="left:'+(todayCol*TL_COLW)+'px; width:'+TL_COLW+'px;"></div>' : '';
     function barHtml(it, r, top, allowOverflowLabel){
@@ -595,8 +579,7 @@ export function initPlanner(opts){
         var r = effRange(it);
         var cat = getCategory(it.categoryId);
         var rowN = rowIdx+3;
-        rowsHtml += '<div class="tl-cell tl-label" style="grid-row:'+rowN+'; grid-column:1;" data-item-id="'+it.id+'" data-sort-id="'+it.id+'" data-role="tl-label"'+(canEdit ? ' title="Drag to reorder, or click to edit"' : '')+'>' +
-          (canEdit ? '<span class="drag-grip">'+GRIP_SVG+'</span>' : '') +
+        rowsHtml += '<div class="tl-cell tl-label" style="grid-row:'+rowN+'; grid-column:1;" data-item-id="'+it.id+'" data-role="tl-label">' +
           '<span class="dot" style="background:'+cat.color+'"></span>' +
           '<span class="tl-title">'+escapeHtml(it.title)+(it.notes?'<span class="note-dot" style="color:var(--ink-faint)"></span>':'')+'</span>' +
           COL_RESIZE_HTML +
@@ -830,12 +813,10 @@ export function initPlanner(opts){
   attachDragSource(monthGrid);
   attachDragSource(timelineGrid);
 
-  /* Timeline label column: drag a row to reorder it, or drag the column's edge to resize.
+  /* Timeline label column: drag a category row to reorder it, or drag the column's edge to resize.
      Registered before the create-drag listener below so it can claim the press first. */
   timelineGrid.addEventListener('pointerdown', function(e){
     if(e.target.closest('[data-role="tl-col-resize"]')){ e.preventDefault(); beginColResize(e); return; }
-    var lbl = e.target.closest('[data-role="tl-label"]');
-    if(lbl && canEdit){ e.preventDefault(); beginSortDrag(e, lbl, timelineGrid, '[data-role="tl-label"]', reorderTimelineRows); return; }
     var catLbl = e.target.closest('[data-role="tl-cat-label"][data-sort-id]');
     if(catLbl && canEdit){ e.preventDefault(); beginSortDrag(e, catLbl, timelineGrid, '[data-role="tl-cat-label"][data-sort-id]', reorderCategories); }
   });
