@@ -123,7 +123,7 @@ export function initPlanner(opts){
   }
 
   function loadPrefs(){
-    var prefs = {activeView:'month', monthYear:PLANNER_YEAR, timelineYear:PLANNER_YEAR, sidebarOpen:true, hiddenCats:{}, tlLabelW:null};
+    var prefs = {activeView:'month', monthYear:PLANNER_YEAR, timelineYear:PLANNER_YEAR, sidebarOpen:true, hiddenCats:{}, tlLabelW:null, tlGroupBy:'category', lastCategoryId:null};
     try{
       var saved = JSON.parse(localStorage.getItem(PREFS_KEY));
       if(saved) Object.keys(prefs).forEach(function(k){ if(saved[k]!=null) prefs[k] = saved[k]; });
@@ -198,6 +198,7 @@ export function initPlanner(opts){
   var monthGrid = el('monthGrid');
   var timelineGrid = el('timelineGrid');
   var timelineScroll = el('timelineScroll');
+  var tlGroupToggle = el('tlGroupToggle');
   var periodLabel = el('periodLabel');
   var modalWrap = el('modalWrap');
   var backdrop = el('backdrop');
@@ -376,7 +377,7 @@ export function initPlanner(opts){
           var cat = getCategory(it.categoryId);
           var tc = textColorFor(cat.color);
           var dragging = dragState && dragState.itemId===it.id ? ' is-dragging' : '';
-          return '<div class="chip'+dragging+'" data-item-id="'+it.id+'" data-role="chip" style="background:'+cat.color+';color:'+tc+'">'+
+          return '<div class="chip'+dragging+'" data-item-id="'+it.id+'" data-role="chip" data-tip style="background:'+cat.color+';color:'+tc+'">'+
             '<div class="bar-handle" data-role="handle-start"></div>' +
             '<div class="bar-body">'+escapeHtml(it.title) + (it.notes ? '<span class="note-dot"></span>' : '')+'</div>' +
             '<div class="bar-handle" data-role="handle-end"></div>' +
@@ -407,7 +408,7 @@ export function initPlanner(opts){
         if(seg.openStart && seg.openEnd) radius='border-radius:0;';
         else if(seg.openStart) radius='border-radius:0 5px 5px 0;';
         else if(seg.openEnd) radius='border-radius:5px 0 0 5px;';
-        return '<div class="bar'+dragging+'" data-item-id="'+seg.item.id+'" data-role="bar" style="left:'+leftCss+'; width:'+widthCss+'; top:calc(var(--lane-pitch) * '+seg.lane+'); background:'+cat.color+'; color:'+tc+'; '+radius+'">' +
+        return '<div class="bar'+dragging+'" data-item-id="'+seg.item.id+'" data-role="bar" data-tip style="left:'+leftCss+'; width:'+widthCss+'; top:calc(var(--lane-pitch) * '+seg.lane+'); background:'+cat.color+'; color:'+tc+'; '+radius+'">' +
           (seg.openStart ? '' : '<div class="bar-handle" data-role="handle-start"></div>') +
           '<div class="bar-body" data-role="bar-body">'+escapeHtml(seg.item.title)+(seg.item.notes?'<span class="note-dot"></span>':'')+'</div>' +
           (seg.openEnd ? '' : '<div class="bar-handle" data-role="handle-end"></div>') +
@@ -434,6 +435,7 @@ export function initPlanner(opts){
   /* ================= Timeline view render ================= */
   var TL_COLW = 34, TL_LABELW_DEFAULT = 168, TL_LABELW_MIN = 120, TL_LABELW_MAX = 520;
   var TL_LABELW = TL_LABELW_DEFAULT; // per-viewer, resizable; synced from prefs on each render
+  var TL_LANE_PITCH = 28; // category rows stack overlapping bars in lanes this far apart
   var COL_RESIZE_HTML = '<div class="tl-col-resize" data-role="tl-col-resize" title="Drag to resize"></div>';
   /* Manual row order for the Timeline: any item missing a tlOrder (new items, or
      items saved before this feature existed) gets one appended, ranked by start date
@@ -446,6 +448,14 @@ export function initPlanner(opts){
   }
   /* ids: the displayed rows in their new order. They trade tlOrder slots among
      themselves, so rows from other years or hidden categories keep their place. */
+  /* ids: the sortable categories in their new order. Locked ones (Uncategorized)
+     aren't draggable and stay pinned at the end. Hidden categories aren't shown on the
+     Timeline, so any left out of ids keep their place after the ones that were. */
+  function reorderCategories(ids){
+    var moved = ids.map(getCategory);
+    state.categories = moved.concat(state.categories.filter(function(c){ return ids.indexOf(c.id)===-1; }));
+    saveState(); render();
+  }
   function reorderTimelineRows(ids){
     var rows = ids.map(findItem);
     var slots = rows.map(function(it){ return it.tlOrder; }).sort(function(a,b){ return a-b; });
@@ -476,6 +486,7 @@ export function initPlanner(opts){
       return {start:sd, end:ed};
     }
 
+    var byCategory = state.settings.tlGroupBy==='category';
     var gridTemplate = TL_LABELW+'px repeat('+N+', '+TL_COLW+'px)';
     timelineGrid.style.gridTemplateColumns = gridTemplate;
 
@@ -511,7 +522,7 @@ export function initPlanner(opts){
     }
 
     // week label row
-    var weekLabelHtml = '<div class="tl-cell tl-corner tl-week-label" style="grid-row:2; grid-column:1; font-weight:700;">Item'+COL_RESIZE_HTML+'</div>';
+    var weekLabelHtml = '<div class="tl-cell tl-corner tl-week-label" style="grid-row:2; grid-column:1; font-weight:700;">'+(byCategory ? 'Category' : 'Item')+COL_RESIZE_HTML+'</div>';
     weeks.forEach(function(w,i){
       weekLabelHtml += '<div class="tl-cell tl-week-label" style="grid-row:2; grid-column:'+(2+i)+';">'+(w.getMonth()+1)+'/'+w.getDate()+'</div>';
     });
@@ -528,17 +539,62 @@ export function initPlanner(opts){
       var r = effRange(it);
       return r && r.end >= rangeStart && r.start <= rangeEnd;
     }).sort(function(a,b){ return (a.tlOrder||0)-(b.tlOrder||0); });
-    {
+
+    var todayStripHtml = todayCol>=0 ? '<div class="tl-today-strip" style="left:'+(todayCol*TL_COLW)+'px; width:'+TL_COLW+'px;"></div>' : '';
+    function barHtml(it, r, top, allowOverflowLabel){
+      var cat = getCategory(it.categoryId);
+      var tc = textColorFor(cat.color);
+      var startCol = colForDate(r.start), endCol = colForDate(r.end);
+      // 1px inset each side so bars in back-to-back weeks don't read as one.
+      var left = startCol*TL_COLW + 1, width = (endCol-startCol+1)*TL_COLW - 2;
+      var dragging = dragState && dragState.itemId===it.id ? ' is-dragging' : '';
+      var compact = width < 66;
+      return '<div class="tl-bar'+dragging+(compact?' is-compact':'')+'" data-item-id="'+it.id+'" data-role="tl-bar" data-tip style="left:'+left+'px; width:'+width+'px; top:'+top+'px; background:'+cat.color+'; color:'+tc+';">' +
+          '<div class="bar-handle" data-role="handle-start"></div>' +
+          (compact ? '' : '<div class="bar-body" data-role="bar-body">'+escapeHtml(it.title)+'</div>') +
+          '<div class="bar-handle" data-role="handle-end"></div>' +
+        '</div>' +
+        (compact && allowOverflowLabel ? '<div class="tl-overflow-label" style="left:'+(left+width+6)+'px;">'+escapeHtml(it.title)+'</div>' : '');
+    }
+
+    var rowCount;
+    if(byCategory){
+      // One row per visible category, in sidebar order. Items that overlap in time
+      // (at week granularity) stack into extra lanes so none hide each other.
+      var cats = state.categories.filter(function(c){ return !isCatHidden(c.id); });
+      cats.forEach(function(cat, rowIdx){
+        var entries = scheduled.filter(function(it){ return getCategory(it.categoryId).id===cat.id; }).map(function(it){
+          var r = effRange(it);
+          return {it:it, r:r, sc:colForDate(r.start), ec:colForDate(r.end)};
+        }).sort(function(a,b){ return a.sc-b.sc || (b.ec-b.sc)-(a.ec-a.sc); });
+        var laneEnds = [];
+        entries.forEach(function(en){
+          var lane = laneEnds.findIndex(function(endCol){ return endCol < en.sc; });
+          if(lane===-1){ lane = laneEnds.length; laneEnds.push(0); }
+          laneEnds[lane] = en.ec;
+          en.lane = lane;
+        });
+        var lanes = Math.max(1, laneEnds.length);
+        var rowN = rowIdx+3;
+        var sortable = canEdit && !cat.locked;
+        rowsHtml += '<div class="tl-cell tl-label tl-cat-label" style="grid-row:'+rowN+'; grid-column:1;" data-role="tl-cat-label"'+(sortable ? ' data-sort-id="'+cat.id+'" title="Drag to reorder"' : '')+'>' +
+            (sortable ? '<span class="drag-grip">'+GRIP_SVG+'</span>' : (canEdit ? '<span class="drag-grip-spacer"></span>' : '')) +
+            '<span class="dot" style="background:'+cat.color+'"></span>' +
+            '<span class="tl-title">'+escapeHtml(cat.name)+'</span>' +
+            '<span class="tl-count">'+(entries.length || '')+'</span>' +
+            COL_RESIZE_HTML +
+          '</div>';
+        rowsHtml += '<div class="tl-track tl-track-row" style="grid-row:'+rowN+'; grid-column:2 / -1; height:'+(34 + (lanes-1)*TL_LANE_PITCH)+'px;" data-cat-id="'+cat.id+'">' +
+            todayStripHtml +
+            entries.map(function(en){ return barHtml(en.it, en.r, 5 + en.lane*TL_LANE_PITCH, false); }).join('') +
+          '</div>';
+      });
+      rowCount = cats.length;
+    } else {
       scheduled.forEach(function(it, rowIdx){
         var r = effRange(it);
-        if(!r) return;
         var cat = getCategory(it.categoryId);
-        var tc = textColorFor(cat.color);
-        var startCol = colForDate(r.start), endCol = colForDate(r.end);
-        var left = startCol*TL_COLW, width = (endCol-startCol+1)*TL_COLW;
         var rowN = rowIdx+3;
-        var dragging = dragState && dragState.itemId===it.id ? ' is-dragging' : '';
-        var compact = width < 68;
         rowsHtml += '<div class="tl-cell tl-label" style="grid-row:'+rowN+'; grid-column:1;" data-item-id="'+it.id+'" data-sort-id="'+it.id+'" data-role="tl-label"'+(canEdit ? ' title="Drag to reorder, or click to edit"' : '')+'>' +
           (canEdit ? '<span class="drag-grip">'+GRIP_SVG+'</span>' : '') +
           '<span class="dot" style="background:'+cat.color+'"></span>' +
@@ -546,22 +602,17 @@ export function initPlanner(opts){
           COL_RESIZE_HTML +
         '</div>';
         rowsHtml += '<div class="tl-track tl-track-row" style="grid-row:'+rowN+'; grid-column:2 / -1;">' +
-          (todayCol>=0 ? '<div class="tl-today-strip" style="left:'+(todayCol*TL_COLW)+'px; width:'+TL_COLW+'px;"></div>' : '') +
-          '<div class="tl-bar'+dragging+(compact?' is-compact':'')+'" data-item-id="'+it.id+'" data-role="tl-bar" style="left:'+left+'px; width:'+width+'px; background:'+cat.color+'; color:'+tc+';" title="'+escapeAttr(it.title)+'">' +
-            '<div class="bar-handle" data-role="handle-start"></div>' +
-            (compact ? '' : '<div class="bar-body" data-role="bar-body">'+escapeHtml(it.title)+'</div>') +
-            '<div class="bar-handle" data-role="handle-end"></div>' +
-          '</div>' +
-          (compact ? '<div class="tl-overflow-label" style="left:'+(left+width+6)+'px;">'+escapeHtml(it.title)+'</div>' : '') +
+          todayStripHtml + barHtml(it, r, 5, true) +
         '</div>';
       });
+      rowCount = scheduled.length;
     }
 
     // Trailing row: always present, even with zero items, so there's a click/drag target
     // for creating new items anywhere on the timeline, not just on top of existing rows.
-    var addRowN = scheduled.length + 3;
+    var addRowN = rowCount + 3;
     rowsHtml += '<div class="tl-cell tl-label tl-add-label" style="grid-row:'+addRowN+'; grid-column:1;">' +
-      (scheduled.length ? '' : 'No scheduled items yet.') + COL_RESIZE_HTML +
+      (rowCount ? '' : (byCategory ? 'All categories are hidden.' : 'No scheduled items yet.')) + COL_RESIZE_HTML +
     '</div>';
     rowsHtml += '<div class="tl-track tl-add-row" style="grid-row:'+addRowN+'; grid-column:2 / -1;" data-role="tl-add-row"></div>';
 
@@ -602,6 +653,10 @@ export function initPlanner(opts){
     monthView.hidden = view!=='month';
     timelineView.hidden = view!=='timeline';
     weekdayRow.hidden = view!=='month';
+    tlGroupToggle.hidden = view!=='timeline';
+    tlGroupToggle.querySelectorAll('[data-group]').forEach(function(b){
+      b.classList.toggle('active', b.dataset.group===state.settings.tlGroupBy);
+    });
     sidebar.hidden = !state.settings.sidebarOpen;
     renderCategoryList();
     renderUnscheduled();
@@ -780,7 +835,9 @@ export function initPlanner(opts){
   timelineGrid.addEventListener('pointerdown', function(e){
     if(e.target.closest('[data-role="tl-col-resize"]')){ e.preventDefault(); beginColResize(e); return; }
     var lbl = e.target.closest('[data-role="tl-label"]');
-    if(lbl && canEdit){ e.preventDefault(); beginSortDrag(e, lbl, timelineGrid, '[data-role="tl-label"]', reorderTimelineRows); }
+    if(lbl && canEdit){ e.preventDefault(); beginSortDrag(e, lbl, timelineGrid, '[data-role="tl-label"]', reorderTimelineRows); return; }
+    var catLbl = e.target.closest('[data-role="tl-cat-label"][data-sort-id]');
+    if(catLbl && canEdit){ e.preventDefault(); beginSortDrag(e, catLbl, timelineGrid, '[data-role="tl-cat-label"][data-sort-id]', reorderCategories); }
   });
 
   timelineGrid.addEventListener('click', function(e){
@@ -847,7 +904,8 @@ export function initPlanner(opts){
     // the corner cells, or the month-band/week-label header rows.
     if(e.target.closest('.tl-label, .tl-corner, .tl-week-label, .tl-month-band')) return;
     var col = tlClampCol(tlColFromClientX(e.clientX));
-    tlCreateDrag = {anchorCol:col, currentCol:col, moved:false, downX:e.clientX, downY:e.clientY};
+    var track = e.target.closest('[data-cat-id]');
+    tlCreateDrag = {anchorCol:col, currentCol:col, moved:false, downX:e.clientX, downY:e.clientY, categoryId: track ? track.dataset.catId : null};
     document.addEventListener('pointermove', onTlCreateDragMove);
     document.addEventListener('pointerup', onTlCreateDragEnd);
     document.addEventListener('pointercancel', onTlCreateDragEnd);
@@ -875,7 +933,7 @@ export function initPlanner(opts){
     var startCol = Math.min(cd.anchorCol, cd.currentCol), endCol = Math.max(cd.anchorCol, cd.currentCol);
     var start = iso(weeks[startCol]), end = iso(addDays(weeks[endCol],6));
     render();
-    openNewItemModal({start:start, end:end});
+    openNewItemModal({start:start, end:end, categoryId:cd.categoryId});
   }
 
   unscheduledListEl.addEventListener('pointerdown', function(e){
@@ -1014,6 +1072,42 @@ export function initPlanner(opts){
     });
   });
 
+  /* ================= Hover tooltips for items ================= */
+  /* Bars and chips marked data-tip show the item's full title, category and dates,
+     since their own text is often cut off. Mouse/pen only; hidden during any drag. */
+  var tipEl = document.createElement('div');
+  tipEl.className = 'tooltip';
+  tipEl.setAttribute('role', 'tooltip');
+  tipEl.hidden = true;
+  document.body.appendChild(tipEl);
+  var tipTarget = null;
+
+  function hideTip(){ tipTarget = null; tipEl.hidden = true; }
+  function placeTip(e){
+    var r = tipTarget.getBoundingClientRect();
+    var w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+    var below = r.top - h - 10 < 8;
+    tipEl.classList.toggle('below', below);
+    tipEl.style.left = Math.max(w/2 + 8, Math.min(window.innerWidth - w/2 - 8, e.clientX)) + 'px';
+    tipEl.style.top = (below ? r.bottom : r.top) + 'px';
+  }
+  document.addEventListener('pointermove', function(e){
+    var busy = dragState || createDrag || tlCreateDrag || sortDrag || colResize;
+    var t = (e.pointerType==='touch' || busy) ? null : e.target.closest('[data-tip]');
+    var it = t && findItem(t.dataset.itemId);
+    if(!it){ if(tipTarget) hideTip(); return; }
+    if(t!==tipTarget){
+      tipTarget = t;
+      tipEl.innerHTML = '<strong>'+escapeHtml(it.title)+'</strong>' +
+        '<span class="tip-meta">'+escapeHtml(getCategory(it.categoryId).name)+(it.start ? ' · '+formatDateRange(it.start, it.end) : '')+'</span>';
+      tipEl.hidden = false;
+    }
+    placeTip(e);
+  });
+  document.addEventListener('pointerdown', hideTip);
+  document.documentElement.addEventListener('mouseleave', hideTip);
+  window.addEventListener('scroll', hideTip, true);
+
   /* ================= Modal logic ================= */
   var editingId = null;
   var editingKind = null; // 'item' | 'blackout' | null (new)
@@ -1057,8 +1151,12 @@ export function initPlanner(opts){
     fieldIsBlackout.checked = false;
     toggleItemMode();
     fieldTitle.value = '';
-    var firstCat = state.categories.find(function(c){return !c.locked;}) || state.categories[0];
-    renderCategorySelect(firstCat.id);
+    // Preset category: the Timeline row it was drawn on, else the last one used, else the first.
+    var catId = (prefill && prefill.categoryId) || state.settings.lastCategoryId;
+    if(!state.categories.some(function(c){ return c.id===catId; })){
+      catId = (state.categories.find(function(c){return !c.locked;}) || state.categories[0]).id;
+    }
+    renderCategorySelect(catId);
     var hasDate = prefill && prefill.start;
     fieldUnscheduled.checked = false;
     setDateField(fieldStart, hasDate ? prefill.start : iso(TODAY));
@@ -1138,6 +1236,7 @@ export function initPlanner(opts){
     var start = scheduled ? (startVal || iso(TODAY)) : null;
     var end = scheduled ? (endVal || start) : null;
     if(scheduled && end < start){ end = start; }
+    state.settings.lastCategoryId = fieldCategory.value;
     if(editingKind==='item' && editingId){
       var item = findItem(editingId);
       if(!item){ hideModal(); render(); return; } // deleted elsewhere while the modal was open
@@ -1234,12 +1333,7 @@ export function initPlanner(opts){
     var grip = e.target.closest('[data-role="cat-grip"]');
     if(!grip || !canEdit) return;
     e.preventDefault();
-    beginSortDrag(e, grip.closest('.category-row'), categoryListEl, '.category-row[data-sort-id]', function(ids){
-      // Locked categories (Uncategorized) aren't draggable and stay pinned at the end.
-      var moved = ids.map(getCategory);
-      state.categories = moved.concat(state.categories.filter(function(c){ return ids.indexOf(c.id)===-1; }));
-      saveState(); render();
-    });
+    beginSortDrag(e, grip.closest('.category-row'), categoryListEl, '.category-row[data-sort-id]', reorderCategories);
   });
 
   el('addCategoryBtn').addEventListener('click', function(){
@@ -1287,6 +1381,12 @@ export function initPlanner(opts){
       state.settings.activeView = btn.dataset.view;
       saveState(); render();
     });
+  });
+  tlGroupToggle.addEventListener('click', function(e){
+    var btn = e.target.closest('[data-group]');
+    if(!btn) return;
+    state.settings.tlGroupBy = btn.dataset.group;
+    saveState(); render();
   });
   el('sidebarToggleBtn').addEventListener('click', function(){
     state.settings.sidebarOpen = !state.settings.sidebarOpen;

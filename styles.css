@@ -80,7 +80,7 @@ button{font-family:inherit;}
   border-bottom:3px solid var(--brandbar-border);
 }
 .topbar-row{display:flex; align-items:center; gap:12px; padding:10px 18px;}
-.topbar-row-nav{border-top:1px solid rgba(255,255,255,0.12); padding-top:8px; padding-bottom:8px;}
+.topbar-row-nav{border-top:1px solid rgba(255,255,255,0.12); padding-top:8px; padding-bottom:8px; flex-wrap:wrap; row-gap:8px;}
 .brand{display:flex; align-items:baseline; gap:6px; margin-right:8px; flex-shrink:0;}
 .brand-logo{width:26px; height:26px; align-self:center; margin-right:2px;}
 .brand-mark{font-family:'Montserrat',sans-serif; font-weight:800; font-size:17px; color:var(--accent); letter-spacing:.2px;}
@@ -110,6 +110,11 @@ button{font-family:inherit;}
 .btn-danger.confirming{background:var(--danger); color:#fff;}
 
 .period-nav{display:flex; align-items:center; gap:6px;}
+.seg-toggle{display:flex; align-items:center; gap:4px; margin-left:16px; background:rgba(255,255,255,0.08); border-radius:10px; padding:3px;}
+.seg-label{font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.4px; color:rgba(255,255,255,0.55); padding:0 6px 0 8px;}
+.seg-btn{border:none; background:transparent; color:rgba(255,255,255,0.75); font-weight:600; font-size:12px; padding:5px 11px; border-radius:7px; cursor:pointer;}
+.seg-btn.active{background:var(--accent); color:#fff;}
+.seg-btn:focus-visible{outline:2px solid var(--focus); outline-offset:2px;}
 .period-label{font-size:14px; min-width:150px; justify-content:center; text-align:center; cursor:default;}
 
 /* ---------- Body layout ---------- */
@@ -203,7 +208,7 @@ body:not(.read-only) .category-row{padding-left:22px;}
 .week-row{display:flex; position:relative; gap:2px;}
 .day-cell{
   flex:1 1 0; min-width:0; background:var(--surface); border:1px solid var(--border); border-radius:8px;
-  padding:4px 4px 6px; display:flex; flex-direction:column; cursor:pointer; min-height:78px;
+  padding:4px 4px 6px; display:flex; flex-direction:column; cursor:pointer; min-height:117px;
 }
 .day-cell.is-weekend, .day-cell.is-blackout{background:var(--surface-alt);}
 .blackout-label{
@@ -262,7 +267,10 @@ body.dragging .lanes-overlay .bar{pointer-events:none;}
 }
 .tl-label .dot{width:9px; height:9px; border-radius:50%; flex-shrink:0;}
 .tl-label .tl-title{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;}
-.tl-label[data-role="tl-label"]{cursor:grab;}
+.tl-label[data-role="tl-label"], .tl-cat-label[data-sort-id]{cursor:grab;}
+.tl-cat-label{cursor:default;}
+.tl-count{margin-left:auto; padding-left:6px; font-size:11px; font-weight:600; color:var(--ink-faint); font-variant-numeric:tabular-nums;}
+.drag-grip-spacer{width:8px; flex-shrink:0; margin-right:-3px;}
 body.read-only .tl-label[data-role="tl-label"]{cursor:pointer;}
 .tl-label .drag-grip{margin-right:-3px;}
 .tl-col-resize{position:absolute; top:0; bottom:-1px; right:-4px; width:8px; cursor:col-resize; z-index:8; display:flex; justify-content:center;}
@@ -319,6 +327,15 @@ body.dragging, body.dragging *{cursor:grabbing !important; user-select:none !imp
 /* The native input only exists to anchor the browser's picker; it stays invisible. */
 .date-native{position:absolute; left:0; bottom:0; width:1px; height:1px; padding:0; border:0; opacity:0; pointer-events:none;}
 .input.is-invalid{border-color:var(--danger); background:var(--danger-soft);}
+
+/* ---------- Item tooltips ---------- */
+.tooltip{
+  position:fixed; z-index:80; pointer-events:none; max-width:280px; transform:translate(-50%, calc(-100% - 8px));
+  padding:6px 9px; border-radius:7px; background:var(--brandbar-bg); color:var(--brandbar-fg); box-shadow:var(--shadow);
+  font-size:12px; font-weight:700; line-height:1.35;
+}
+.tooltip.below{transform:translate(-50%, 8px);}
+.tooltip .tip-meta{display:block; margin-top:2px; font-size:11px; font-weight:500; color:rgba(255,255,255,0.7);}
 
 /* ---------- Modal ---------- */
 .backdrop{position:fixed; inset:0; background:rgba(20,18,12,0.5); z-index:60;}
