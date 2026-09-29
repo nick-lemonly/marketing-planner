@@ -1373,6 +1373,25 @@ export function initPlanner(opts){
     if(row) openBlackoutModal(row.dataset.blackoutId);
   });
 
+  /* Same shape as the MCP server's backups, so its restore_backup tool accepts this file. */
+  el('exportJsonBtn').addEventListener('click', function(){
+    var payload = {
+      app: 'lemonly-marketing-planner',
+      exportedAt: new Date().toISOString(),
+      categories: state.categories,
+      items: state.items,
+      blackoutDates: state.blackoutDates
+    };
+    var url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'}));
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'marketing-planner-' + iso(new Date()) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  });
+
   el('clearSampleBtn').addEventListener('click', function(){
     state.items = state.items.filter(function(it){ return !it.isSample; });
     saveState(); render();

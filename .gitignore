@@ -1,2 +1,8 @@
 .DS_Store
 .claude/
+
+# MCP server (mcp/): dependencies, local config, credentials, and data backups
+node_modules/
+.env
+*service-account*.json
+mcp/backups/
