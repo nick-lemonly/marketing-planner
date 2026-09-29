@@ -63,7 +63,11 @@
       <section class="panel">
         <div class="panel-title-row">
           <h2 class="panel-title">Categories</h2>
-          <button class="btn btn-sm btn-ghost" id="addCategoryBtn" type="button" data-edit-only style="background:var(--surface-alt); color:var(--ink);">+ Add</button>
+          <div class="panel-title-actions">
+            <button class="link-btn" id="showAllCatsBtn" type="button">Show all</button>
+            <button class="link-btn" id="hideAllCatsBtn" type="button">Hide all</button>
+            <button class="btn btn-sm btn-ghost" id="addCategoryBtn" type="button" data-edit-only style="background:var(--surface-alt); color:var(--ink);">+ Add</button>
+          </div>
         </div>
         <div id="categoryList" class="category-list"></div>
       </section>

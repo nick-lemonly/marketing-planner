@@ -228,6 +228,9 @@ export function initPlanner(opts){
 
   /* ================= Rendering: sidebar ================= */
   function renderCategoryList(){
+    var hiddenCount = state.categories.filter(function(c){ return isCatHidden(c.id); }).length;
+    el('showAllCatsBtn').disabled = hiddenCount===0;
+    el('hideAllCatsBtn').disabled = hiddenCount===state.categories.length;
     categoryListEl.innerHTML = state.categories.map(function(c){
       var hidden = isCatHidden(c.id);
       var lockAttrs = (c.locked || !canEdit) ? 'disabled' : '';
@@ -361,7 +364,7 @@ export function initPlanner(opts){
       var laneCount = lanes.length;
       var laneAreaH = 'calc(var(--lane-pitch) * '+laneCount+')';
 
-      var dayCellsHtml = week.map(function(day){
+      var dayCellsHtml = week.map(function(day, dayIdx){
         var isToday = sameISO(day, TODAY);
         var isSelecting = selRange && day>=selRange.start && day<=selRange.end;
         var isWeekend = day.getDay()===0 || day.getDay()===6;
@@ -373,7 +376,7 @@ export function initPlanner(opts){
           var r = effRange(it);
           return r && sameISO(r.start, day) && sameISO(r.end, day);
         });
-        var chipsHtml = singles.map(function(it){
+        var chips = singles.map(function(it){
           var cat = getCategory(it.categoryId);
           var tc = textColorFor(cat.color);
           var dragging = dragState && dragState.itemId===it.id ? ' is-dragging' : '';
@@ -382,12 +385,23 @@ export function initPlanner(opts){
             '<div class="bar-body">'+escapeHtml(it.title) + (it.notes ? '<span class="note-dot"></span>' : '')+'</div>' +
             '<div class="bar-handle" data-role="handle-end"></div>' +
           '</div>';
-        }).join('');
+        });
+        // Fill this day's slots top-down: rows a multi-day bar crosses on this day stay
+        // empty for the bar (drawn in the overlay above), and single-day chips take the
+        // free rows, so a chip isn't pushed below bars that only cover other days.
+        var barLanes = {}, slotsUsed = 0;
+        multi.forEach(function(seg){
+          if(seg.colStart<=dayIdx && dayIdx<=seg.colEnd){ barLanes[seg.lane] = true; slotsUsed = Math.max(slotsUsed, seg.lane+1); }
+        });
+        var slots = [], ci = 0;
+        for(var s=0; s<slotsUsed; s++){
+          slots.push(!barLanes[s] && ci<chips.length ? chips[ci++] : '<div class="lane-slot"></div>');
+        }
+        var chipsHtml = slots.concat(chips.slice(ci)).join('');
         return '<div class="day-cell'+(isToday?' is-today':'')+(isWeekend?' is-weekend':'')+(isBlackout?' is-blackout':'')+(isSelecting?' is-selecting':'')+'" data-date="'+iso(day)+'">' +
           '<div class="day-num-row"><span class="day-num" style="background:'+mc+';color:'+dtc+'">'+day.getDate()+'</span>' +
             (blackoutEntry && blackoutEntry.label ? '<span class="blackout-label">'+escapeHtml(blackoutEntry.label)+'</span>' : '') +
           '</div>' +
-          '<div class="lane-spacer" style="height:'+laneAreaH+'"></div>' +
           '<div class="chips">'+chipsHtml+'</div>' +
         '</div>';
       }).join('');
@@ -1315,6 +1329,16 @@ export function initPlanner(opts){
     if(!grip || !canEdit) return;
     e.preventDefault();
     beginSortDrag(e, grip.closest('.category-row'), categoryListEl, '.category-row[data-sort-id]', reorderCategories);
+  });
+
+  // Visibility is a per-viewer preference, so these work in view-only mode too.
+  el('showAllCatsBtn').addEventListener('click', function(){
+    state.settings.hiddenCats = {};
+    saveState(); render();
+  });
+  el('hideAllCatsBtn').addEventListener('click', function(){
+    state.categories.forEach(function(c){ state.settings.hiddenCats[c.id] = true; });
+    saveState(); render();
   });
 
   el('addCategoryBtn').addEventListener('click', function(){
