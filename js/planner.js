@@ -123,10 +123,12 @@ export function initPlanner(opts){
   }
 
   function loadPrefs(){
-    var prefs = {activeView:'month', monthYear:PLANNER_YEAR, timelineYear:PLANNER_YEAR, sidebarOpen:true, hiddenCats:{}, tlLabelW:null, tlGroupBy:'category', lastCategoryId:null};
+    var prefs = {activeView:'month', year:PLANNER_YEAR, sidebarOpen:true, hiddenCats:{}, tlLabelW:null, tlGroupBy:'category', lastCategoryId:null};
     try{
       var saved = JSON.parse(localStorage.getItem(PREFS_KEY));
       if(saved) Object.keys(prefs).forEach(function(k){ if(saved[k]!=null) prefs[k] = saved[k]; });
+      // Both views used to keep their own year; carry over the calendar's.
+      if(saved && saved.year==null && saved.monthYear!=null) prefs.year = saved.monthYear;
     }catch(e){ /* storage unavailable */ }
     return prefs;
   }
@@ -134,10 +136,65 @@ export function initPlanner(opts){
   var state = initialData();
   state.settings = loadPrefs();
 
-  function saveState(){
+  function sharedData(){ return {categories:state.categories, items:state.items, blackoutDates:state.blackoutDates}; }
+
+  /* opts.typingKey: a burst of keystrokes in the same field becomes one undo step.
+     opts.skipHistory: the change is itself an undo/redo. */
+  function saveState(opts){
+    opts = opts || {};
     try{ localStorage.setItem(PREFS_KEY, JSON.stringify(state.settings)); }catch(e){ /* storage unavailable */ }
-    if(canEdit) onDataChange({categories:state.categories, items:state.items, blackoutDates:state.blackoutDates});
+    if(!canEdit) return;
+    if(!opts.skipHistory) recordHistory(opts.typingKey);
+    onDataChange(sharedData());
   }
+
+  /* ================= Undo / redo ================= */
+  /* Snapshots of the shared data (not view preferences like the year or hidden
+     categories). saveState runs after every edit, so it compares against the last
+     snapshot and pushes the old one when something actually changed. */
+  var HISTORY_LIMIT = 20;
+  var undoState = {undo:[], redo:[], committed:null, typingKey:null, typingAt:0};
+
+  /* JSON with sorted keys, so the same data always compares equal no matter what
+     order Firestore hands an object's fields back in. */
+  function canonicalJSON(value){
+    return JSON.stringify(value, function(key, v){
+      if(!v || typeof v!=='object' || Array.isArray(v)) return v;
+      var out = {};
+      Object.keys(v).sort().forEach(function(k){ out[k] = v[k]; });
+      return out;
+    });
+  }
+
+  function recordHistory(typingKey){
+    var now = canonicalJSON(sharedData());
+    if(now===undoState.committed) return; // only a view preference changed
+    var sameBurst = typingKey && typingKey===undoState.typingKey && Date.now()-undoState.typingAt < 1500;
+    if(!sameBurst){
+      undoState.undo.push(undoState.committed);
+      if(undoState.undo.length > HISTORY_LIMIT) undoState.undo.shift();
+    }
+    undoState.redo = [];
+    undoState.committed = now;
+    undoState.typingKey = typingKey || null;
+    undoState.typingAt = Date.now();
+  }
+
+  function stepHistory(from, to, message){
+    if(!from.length) return;
+    to.push(undoState.committed);
+    undoState.committed = from.pop();
+    undoState.typingKey = null;
+    var d = JSON.parse(undoState.committed);
+    state.categories = d.categories;
+    state.items = d.items;
+    state.blackoutDates = d.blackoutDates;
+    saveState({skipHistory:true});
+    render();
+    flashNotice(message);
+  }
+  function undo(){ stepHistory(undoState.undo, undoState.redo, 'Undone'); }
+  function redo(){ stepHistory(undoState.redo, undoState.undo, 'Redone'); }
 
   /* Replace shared data with a newer copy from the server. */
   function setData(data){
@@ -145,13 +202,19 @@ export function initPlanner(opts){
     state.categories = d.categories;
     state.items = d.items;
     state.blackoutDates = d.blackoutDates;
+    // Our own saves echo back unchanged. Anything else came from elsewhere (another
+    // tab, Claude), and undoing past it would silently revert that change, so start fresh.
+    var incoming = canonicalJSON(sharedData());
+    if(incoming!==undoState.committed){
+      undoState.undo = []; undoState.redo = []; undoState.committed = incoming; undoState.typingKey = null;
+    }
     // Mid-gesture renders are driven by the gesture itself; the next one picks this up.
     if(dragState || createDrag || tlCreateDrag || sortDrag || colResize) return;
     render();
   }
 
   function isCatHidden(id){ return !!state.settings.hiddenCats[id]; }
-  function displayedYear(){ return state.settings.activeView==='month' ? state.settings.monthYear : state.settings.timelineYear; }
+  function displayedYear(){ return state.settings.year; }
 
   function getCategory(id){
     for(var i=0;i<state.categories.length;i++){ if(state.categories[i].id===id) return state.categories[i]; }
@@ -306,7 +369,7 @@ export function initPlanner(opts){
   }
 
   function renderMonth(){
-    var year = state.settings.monthYear;
+    var year = state.settings.year;
     periodLabel.textContent = String(year);
     var weekStarts = getYearWeeks(year);
     var items = visibleItems();
@@ -461,7 +524,7 @@ export function initPlanner(opts){
   }
   function renderTimeline(){
     TL_LABELW = state.settings.tlLabelW || TL_LABELW_DEFAULT;
-    var year = state.settings.timelineYear;
+    var year = state.settings.year;
     periodLabel.textContent = String(year);
     var weeks = getYearWeeks(year);
     var N = weeks.length;
@@ -621,7 +684,7 @@ export function initPlanner(opts){
     }
   }
   function scrollTimelineToToday(smooth){
-    var year = state.settings.timelineYear;
+    var year = state.settings.year;
     var weeks = getYearWeeks(year);
     if(TODAY < weeks[0] || TODAY > addDays(weeks[weeks.length-1],6)) return;
     var idx = Math.floor(diffDays(weeks[0], TODAY)/7);
@@ -714,7 +777,7 @@ export function initPlanner(opts){
       if(!track) return null;
       var rect = track.getBoundingClientRect();
       var x = e.clientX - rect.left;
-      var year = state.settings.timelineYear;
+      var year = state.settings.year;
       var weeks = getYearWeeks(year);
       var colIdx = Math.floor(x/TL_COLW);
       if(colIdx<0) colIdx=0; if(colIdx>weeks.length-1) colIdx=weeks.length-1;
@@ -753,7 +816,7 @@ export function initPlanner(opts){
         dragState.previewStart = iso(os); dragState.previewEnd = iso(ne);
       }
     } else {
-      var weeks = getYearWeeks(state.settings.timelineYear);
+      var weeks = getYearWeeks(state.settings.year);
       function colOf(dstr){
         var idx = Math.floor(diffDays(weeks[0], parseISO(dstr))/7);
         if(idx<0) idx=0; if(idx>weeks.length-1) idx=weeks.length-1;
@@ -888,7 +951,7 @@ export function initPlanner(opts){
     return Math.floor((clientX - rect.left - TL_LABELW) / TL_COLW);
   }
   function tlClampCol(col){
-    var weeks = getYearWeeks(state.settings.timelineYear);
+    var weeks = getYearWeeks(state.settings.year);
     if(col<0) col=0; if(col>weeks.length-1) col=weeks.length-1;
     return col;
   }
@@ -924,7 +987,7 @@ export function initPlanner(opts){
     document.removeEventListener('pointercancel', onTlCreateDragEnd);
     document.body.classList.remove('dragging');
     tlCreateDrag = null;
-    var weeks = getYearWeeks(state.settings.timelineYear);
+    var weeks = getYearWeeks(state.settings.year);
     var startCol = Math.min(cd.anchorCol, cd.currentCol), endCol = Math.max(cd.anchorCol, cd.currentCol);
     var start = iso(weeks[startCol]), end = iso(addDays(weeks[endCol],6));
     render();
@@ -1102,6 +1165,34 @@ export function initPlanner(opts){
   document.addEventListener('pointerdown', hideTip);
   document.documentElement.addEventListener('mouseleave', hideTip);
   window.addEventListener('scroll', hideTip, true);
+
+  /* ================= Undo / redo shortcuts ================= */
+  /* Cmd/Ctrl+Z undoes, Cmd/Ctrl+Shift+Z (or Ctrl+Y) redoes. Text fields keep their
+     own native undo, and nothing happens while the modal is open or mid-drag. */
+  document.addEventListener('keydown', function(e){
+    if(!canEdit || !(e.metaKey || e.ctrlKey) || e.altKey) return;
+    var key = e.key.toLowerCase();
+    var isUndo = key==='z' && !e.shiftKey;
+    var isRedo = (key==='z' && e.shiftKey) || (key==='y' && e.ctrlKey && !e.metaKey);
+    if(!isUndo && !isRedo) return;
+    if(!modalWrap.hidden || dragState || createDrag || tlCreateDrag || sortDrag || colResize) return;
+    if(e.target.closest && e.target.closest('textarea, select, [contenteditable], input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="button"])')) return;
+    e.preventDefault();
+    if(isUndo) undo(); else redo();
+  });
+
+  var noticeEl = document.createElement('div');
+  noticeEl.className = 'notice';
+  noticeEl.setAttribute('role', 'status');
+  noticeEl.hidden = true;
+  document.body.appendChild(noticeEl);
+  var noticeTimer = null;
+  function flashNotice(text){
+    noticeEl.textContent = text;
+    noticeEl.hidden = false;
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(function(){ noticeEl.hidden = true; }, 1200);
+  }
 
   /* ================= Modal logic ================= */
   var editingId = null;
@@ -1318,7 +1409,7 @@ export function initPlanner(opts){
     if(action==='rename-cat'){
       var cat = getCategory(row.dataset.catId);
       cat.name = e.target.value;
-      saveState();
+      saveState({typingKey:'rename-'+cat.id});
       renderUnscheduled();
       if(state.settings.activeView==='timeline') renderTimeline();
     }
@@ -1420,13 +1511,16 @@ export function initPlanner(opts){
   el('nextBtn').addEventListener('click', function(){ step(1); });
 
   function step(dir){
-    if(state.settings.activeView==='month'){
-      state.settings.monthYear += dir;
-    } else {
-      state.settings.timelineYear += dir;
-    }
+    state.settings.year += dir;
     saveState(); render();
   }
+
+  el('todayBtn').addEventListener('click', function(){
+    state.settings.year = TODAY.getFullYear();
+    saveState(); render();
+    if(state.settings.activeView==='month') scrollMonthToToday(true);
+    else scrollTimelineToToday(true);
+  });
 
   /* ================= Topbar height (for sticky offsets) ================= */
   var topbarEl = document.querySelector('.topbar');
@@ -1441,6 +1535,7 @@ export function initPlanner(opts){
   if(document.fonts && document.fonts.ready){ document.fonts.ready.then(updateTopbarHeight); }
 
   /* ================= Init ================= */
+  undoState.committed = canonicalJSON(sharedData());
   if(!opts.data && canEdit) saveState(); // first run: write the seeded planner
   render();
 
