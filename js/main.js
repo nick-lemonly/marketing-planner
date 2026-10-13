@@ -5,6 +5,7 @@ import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signO
 import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 import { firebaseConfig, ALLOWED_DOMAINS, EDITOR_EMAILS } from './firebase-config.js';
 import { initPlanner } from './planner.js';
+import { startPresence } from './presence.js';
 
 var SAVE_DELAY_MS = 600;
 var DOMAIN_HINT = 'Please sign in with your ' + ALLOWED_DOMAINS.map(function(d){ return '@' + d; }).join(' or ') + ' Google account.';
@@ -22,13 +23,15 @@ if(firebaseConfig.apiKey === 'REPLACE_ME'){
   throw new Error('Firebase config missing');
 }
 
-var auth = getAuth(initializeApp(firebaseConfig));
+var firebaseApp = initializeApp(firebaseConfig);
+var auth = getAuth(firebaseApp);
 var db = getFirestore();
 var plannerRef = doc(db, 'planners', 'main');
 var provider = new GoogleAuthProvider();
 provider.setCustomParameters({ prompt: 'select_account' });
 
 var planner = null;
+var presence = null;
 var userEmail = null;
 var pendingError = null; // shown on the sign-in screen after a forced sign-out
 
@@ -56,7 +59,11 @@ signInBtn.addEventListener('click', function(){
   });
 });
 
-el('signOutBtn').addEventListener('click', function(){ flushSave(); signOut(auth); });
+el('signOutBtn').addEventListener('click', function(){
+  flushSave();
+  // Leave presence first; once signed out, the rules no longer let us remove our entry.
+  (presence ? presence.leave() : Promise.resolve()).then(function(){ signOut(auth); });
+});
 
 onAuthStateChanged(auth, function(user){
   if(!user){
@@ -80,6 +87,10 @@ function startSession(user){
   var canEdit = EDITOR_EMAILS.indexOf(userEmail) !== -1;
   document.body.classList.toggle('read-only', !canEdit);
   el('userBadge').textContent = canEdit ? userEmail : userEmail + ' · View only';
+  if(firebaseConfig.databaseURL){
+    try{ presence = startPresence(firebaseApp, user, el('presence')); }
+    catch(err){ console.warn('[presence]', err.message); }
+  }
 
   onSnapshot(plannerRef, function(snap){
     if(!planner){

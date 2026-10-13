@@ -7,7 +7,9 @@ export const firebaseConfig = {
   projectId: "lemonly-marketing-planner",
   storageBucket: "lemonly-marketing-planner.firebasestorage.app",
   messagingSenderId: "989126397565",
-  appId: "1:989126397565:web:c332a05c7fc6ac3cc16b14"
+  appId: "1:989126397565:web:c332a05c7fc6ac3cc16b14",
+  // Realtime Database, used only for "who's viewing" avatars. Leave it out to turn presence off.
+  databaseURL: "https://lemonly-marketing-planner-default-rtdb.firebaseio.com"
 };
 
 /* Who can view and who can edit. These drive the UI only; keep them in sync with

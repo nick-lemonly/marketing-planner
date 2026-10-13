@@ -1,0 +1,19 @@
+{
+  "rules": {
+    "presence": {
+      ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && auth.token.email_verified == true && (auth.token.email.toLowerCase().endsWith('@lemonly.com') || auth.token.email.toLowerCase().endsWith('@clickrain.com'))",
+      "$uid": {
+        "$tab": {
+          ".write": "auth != null && auth.uid == $uid && auth.token.firebase.sign_in_provider == 'google.com' && auth.token.email_verified == true && (auth.token.email.toLowerCase().endsWith('@lemonly.com') || auth.token.email.toLowerCase().endsWith('@clickrain.com'))",
+          ".validate": "newData.hasChildren(['name', 'email', 'state', 'since']) && newData.child('email').val() == auth.token.email",
+          "name": { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "email": { ".validate": "newData.isString()" },
+          "photoURL": { ".validate": "newData.isString() && newData.val().length <= 2000" },
+          "state": { ".validate": "newData.val() == 'active' || newData.val() == 'away'" },
+          "since": { ".validate": "newData.isNumber()" },
+          "$other": { ".validate": false }
+        }
+      }
+    }
+  }
+}
